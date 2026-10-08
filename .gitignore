@@ -1,0 +1,17 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+!.env.example
+*.env
+backend/.env
+!backend/.env.example
+backend/data/
+*.db
+.pytest_cache/
+.qodo/
+.vercel/
+*.log
