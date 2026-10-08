@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, History, Info, Zap } from 'lucide-react'
+import {
+  AlertCircle,
+  FileSearch,
+  History,
+  Info,
+  Layers,
+  Sparkles,
+  Zap,
+} from 'lucide-react'
 import Header from '../components/Header.jsx'
+import HeroBanner from '../components/HeroBanner.jsx'
 import HistoryPanel from '../components/HistoryPanel.jsx'
 import InputPanel from '../components/InputPanel.jsx'
+import LoadingInvestigation from '../components/LoadingInvestigation.jsx'
 import VerdictCard from '../components/VerdictCard.jsx'
 import ExtractedContent from '../components/ExtractedContent.jsx'
 import ClaimsPanel from '../components/ClaimsPanel.jsx'
@@ -15,7 +25,6 @@ import SourceReliability from '../components/SourceReliability.jsx'
 import ScoreBreakdown from '../components/ScoreBreakdown.jsx'
 import Conclusion from '../components/Conclusion.jsx'
 import Explore from './Explore.jsx'
-import Home from './Home.jsx'
 import {
   analyze,
   clearHistory,
@@ -84,11 +93,19 @@ export default function Dashboard() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const handleFormatChange = (newFormat) => {
+    const targetPath = newFormat === 'image' ? '/images' : `/${newFormat}`
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath)
+    }
+    setPage(newFormat)
+  }
+
   const showResult = (data) => {
     setResult(data)
     if (data?.case_id) setSelectedHistoryId(data.case_id)
     loadHistory(historyFilter)
-    window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
   }
 
   const handleSelectHistory = async (id) => {
@@ -101,9 +118,9 @@ export default function Dashboard() {
       setHistoryOpen(false)
       setMessage({
         kind: 'info',
-        text: `Restored saved analysis (${fullCase.input?.type || 'analysis'}) from SQLite memory. No AI queries needed.`,
+        text: `Restored saved analysis (${fullCase.input?.type || 'analysis'}) from SQLite memory. No external AI queries needed.`,
       })
-      window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+      window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
     } catch (err) {
       setMessage({ kind: 'error', text: `Failed to load history item: ${err.message}` })
     } finally {
@@ -159,7 +176,7 @@ export default function Dashboard() {
       const res = await analyze(endpoint, opts)
       showResult(res)
     } catch (e) {
-      const demoHint = e.body?.demo_available ? ' You can still run one of the sample checks from the home page.' : ''
+      const demoHint = e.body?.demo_available ? ' You can still run one of the sample checks from the hero bar.' : ''
       setMessage({ kind: e.status >= 500 || e.status === 0 ? 'error' : 'info', text: e.message + demoHint })
     } finally {
       setLoading(false)
@@ -167,7 +184,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell flex flex-col min-h-screen bg-[#f7f5fa]">
       <Header
         health={health}
         page={page}
@@ -176,63 +193,158 @@ export default function Dashboard() {
         onToggleHistory={() => setHistoryOpen((p) => !p)}
         historyOpen={historyOpen}
       />
-      <main className={`main-content ${page === 'home' ? 'main-home' : ''}`}>
-        {page === 'home'
-          ? <Home demos={demos} loading={loading} activeDemo={activeDemo} onDemo={handleDemo} onNavigate={navigate} />
-          : page === 'explore'
-            ? <Explore onNavigate={navigate} />
-            : <InputPanel pageType={page} loading={loading} onAnalyze={handleAnalyze} />}
 
+      <main className="main-content flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+        {/* Hero Section & Evidentiary Pipeline Banner */}
+        <HeroBanner
+          demos={demos}
+          activeDemo={activeDemo}
+          loading={loading}
+          onDemo={handleDemo}
+        />
+
+        {/* Workspace Input or Explore Page */}
+        {page === 'explore' ? (
+          <Explore onNavigate={navigate} />
+        ) : (
+          <InputPanel
+            pageType={page === 'home' ? 'text' : page}
+            loading={loading}
+            onAnalyze={handleAnalyze}
+            onFormatChange={handleFormatChange}
+          />
+        )}
+
+        {/* Loading Investigation Progress HUD */}
+        {loading && (
+          <LoadingInvestigation kind={page} />
+        )}
+
+        {/* Feedback / Alert Notice Banner */}
         {message && (
-          <div role="alert" className={`notice ${message.kind === 'error' ? 'notice-error' : 'notice-info'}`}>
-            {message.kind === 'error' ? <AlertCircle size={18} className="notice-icon" aria-hidden /> : <Info size={18} className="notice-icon" aria-hidden />}
-            {message.text}
+          <div
+            role="alert"
+            className={`flex items-center gap-3 rounded-xl border p-4 text-xs sm:text-sm font-medium shadow-xs transition-all ${
+              message.kind === 'error'
+                ? 'border-[#f5c6cb] bg-[#fbf2f2] text-[#8e2525]'
+                : 'border-[#c4e0f5] bg-[#f2f8fc] text-[#1b5e90]'
+            }`}
+          >
+            {message.kind === 'error' ? (
+              <AlertCircle size={18} className="shrink-0 text-[#c0392b]" aria-hidden />
+            ) : (
+              <Info size={18} className="shrink-0 text-[#1b5e90]" aria-hidden />
+            )}
+            <span className="leading-relaxed">{message.text}</span>
           </div>
         )}
 
+        {/* Comprehensive Results Area */}
         {result && (
-          <div ref={resultsRef} className="results-area">
-            <div className="results-heading"><span className="eyebrow">YOUR ANALYSIS</span><h2>Evidence review</h2></div>
+          <div ref={resultsRef} className="results-area mt-10 space-y-6 scroll-mt-24">
+            {/* Header of results */}
+            <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-3">
+              <div>
+                <span className="font-mono text-[11px] font-extrabold uppercase tracking-widest text-[#8e2cc9]">
+                  INVESTIGATION DOSSIER
+                </span>
+                <h2 className="mt-1 text-2xl font-black tracking-tight text-ink sm:text-3xl">
+                  Evidentiary Assessment Report
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-[#f4edf9] px-3 py-1 font-mono text-xs font-bold text-[#8e2cc9]">
+                  {result.claims?.length || 0} Claims Evaluated
+                </span>
+              </div>
+            </div>
+
+            {/* Instant Result Cache Badge */}
             {result.from_cache && (
-              <div role="status" className="notice notice-info mb-4">
-                <Zap size={16} className="notice-icon text-[#16866b]" aria-hidden />
+              <div
+                role="status"
+                className="flex items-center gap-2.5 rounded-xl border border-[#b4e6d6] bg-[#effbf6] px-4 py-3 text-xs text-[#0f5343] shadow-xs"
+              >
+                <Zap size={16} className="text-[#0e8f7e] fill-[#0e8f7e] shrink-0" aria-hidden />
                 <span>
-                  <strong>Instant cached result:</strong> Loaded directly from memory cache without repeating AI or web search queries.
+                  <strong>Instant Result:</strong> Retrieved from your recent analysis memory. Loaded directly without repeating AI or external search queries.
                 </span>
               </div>
             )}
+
+            {/* System Warnings if any */}
             {result.warnings?.length > 0 && (
-              <div role="status" className="result-warning">
-                <strong>Some steps ran with limits:</strong>
-                <ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+              <div
+                role="status"
+                className="rounded-xl border border-[#f0dc9d] bg-[#fffaf0] p-4 text-xs text-[#795b10] shadow-xs"
+              >
+                <strong className="block font-bold">Execution Notes:</strong>
+                <ul className="mt-1 list-disc pl-5 space-y-0.5">
+                  {result.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
               </div>
             )}
+
+            {/* Simulated Demo Disclaimer */}
             {result.mode === 'demo' && (
-              <p className="demo-disclaimer"><strong>Sample check:</strong> {result.demo?.label}. Sources and classifications are simulated; scoring is calculated live.</p>
+              <div className="rounded-xl border border-line bg-white p-3 text-xs text-ink-soft">
+                <strong className="text-ink">Sample Demonstration:</strong> {result.demo?.label}. Evidence sources and stances are simulated fixtures; trust scoring is computed live through the real deterministic scoring engine.
+              </div>
             )}
-            <VerdictCard overall={result.overall} headline={result.conclusion.headline} />
+
+            {/* Hero Verdict Card */}
+            <VerdictCard overall={result.overall} headline={result.conclusion?.headline} />
+
+            {/* Ingested Content & Fingerprint */}
             <ExtractedContent input={result.input} />
+
+            {/* Extracted Claims */}
             <ClaimsPanel claims={result.claims} />
-            <div className="result-grid">
-              <ManipulationPanel manipulation={result.manipulation} />
+
+            {/* Contradiction Analysis (Crucial Differentiator!) */}
+            <ContradictionPanel contradictions={result.contradictions || []} />
+
+            {/* Manipulation & Evidence Distribution Grid */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ManipulationPanel manipulation={result.manipulation || {}} />
               <EvidenceSummary summary={result.evidence_summary} claims={result.claims} />
             </div>
-            <ContradictionPanel contradictions={result.contradictions} />
+
+            {/* Full Evidence Workspace */}
             <EvidenceList claims={result.claims} />
-            <div className="result-grid">
-              <EvidenceTimeline trail={result.trail} />
-              <SourceReliability claims={result.claims} heuristics={result.heuristics} />
+
+            {/* Timeline & Source Authority Grid */}
+            <div className="grid gap-6 lg:grid-cols-2">
+              <EvidenceTimeline trail={result.trail || []} />
+              <SourceReliability claims={result.claims} heuristics={result.heuristics || {}} />
             </div>
+
+            {/* Mathematical Score Breakdown */}
             <ScoreBreakdown overall={result.overall} />
+
+            {/* Final Reasoned Conclusion */}
             <Conclusion conclusion={result.conclusion} />
           </div>
         )}
       </main>
-      <footer className="app-footer">
-        <span className="footer-brand">LEGIT.AI</span>
-        <span>Evidence can be incomplete. Use this as a helpful signal, not proof that content is real or fake.</span>
+
+      {/* Footer */}
+      <footer className="app-footer mt-auto border-t border-line bg-white/60 py-6 text-xs text-ink-faint">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="font-black text-[#8e2cc9] tracking-wider text-sm">LEGIT.AI</span>
+            <span>—</span>
+            <span>Beyond Fake or Real. Evidence Before Conclusions.</span>
+          </div>
+          <span className="text-[11px]">
+            Multimodal Digital Trust Verification · Anonymous &amp; Session Isolated
+          </span>
+        </div>
       </footer>
 
+      {/* History Drawer */}
       <HistoryPanel
         isOpen={historyOpen}
         onClose={() => setHistoryOpen(false)}

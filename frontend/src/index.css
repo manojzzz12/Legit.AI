@@ -338,6 +338,19 @@ button:disabled:hover { cursor: not-allowed; }
   .app-footer { width: calc(100% - 28px); align-items: flex-start; flex-direction: column; }
 }
 
+/* Custom sleek scrollbar for investigation workspaces */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1edf7; border-radius: 99px; }
+::-webkit-scrollbar-thumb { background: #cbbbdc; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #9e31bf; }
+
+/* Subtle pulse and glow animations */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.animate-pulse-subtle { animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }

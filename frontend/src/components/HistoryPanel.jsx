@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  AlertCircle,
   AudioLines,
   Clock,
   Database,
@@ -42,7 +43,12 @@ function formatTimestamp(isoStr) {
     if (diffMin < 1) return 'Just now'
     if (diffMin < 60) return `${diffMin}m ago`
     if (diffHours < 24) return `${diffHours}h ago`
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   } catch {
     return isoStr
   }
@@ -95,42 +101,47 @@ export default function HistoryPanel({
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop with blur */}
       <div
-        className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity"
+        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity duration-300"
         onClick={onClose}
         aria-hidden="true"
       />
 
       {/* Drawer Panel */}
       <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[460px] flex-col bg-white shadow-2xl transition-transform"
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[480px] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out border-l border-line"
         role="dialog"
         aria-modal="true"
-        aria-label="Analysis History"
+        aria-label="Analysis History Drawer"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#f2e7fa] text-[#8e2cc9]">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4 bg-[#fbf9fe]">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#f2e7fa] text-[#8e2cc9] shadow-xs">
               <History size={18} aria-hidden />
             </div>
             <div>
-              <h2 className="text-base font-bold text-ink">Analysis History</h2>
-              <p className="text-xs text-ink-faint">Saved runs & instant cache</p>
+              <h2 className="text-base font-extrabold text-ink">
+                Investigation History
+              </h2>
+              <p className="text-xs text-ink-faint">
+                Session memory &amp; instant cache
+              </p>
             </div>
           </div>
+
           <div className="flex items-center gap-2">
             {history.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearAllClick}
-                className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-all cursor-pointer ${
                   confirmClearAll
-                    ? 'bg-[#c0392b] text-white hover:bg-[#a92e22]'
-                    : 'text-ink-faint hover:bg-[#f6dcdc] hover:text-[#8e1b1b]'
+                    ? 'bg-[#c0392b] text-white shadow-xs'
+                    : 'text-ink-faint hover:bg-[#fbe6e3] hover:text-[#c0392b]'
                 }`}
-                title="Clear all saved history"
+                title="Clear all saved analyses in this session"
               >
                 {confirmClearAll ? 'Confirm Clear All?' : 'Clear all'}
               </button>
@@ -138,8 +149,8 @@ export default function HistoryPanel({
             <button
               type="button"
               onClick={onClose}
-              className="grid h-8 w-8 place-items-center rounded-lg text-ink-soft hover:bg-paper hover:text-ink"
-              aria-label="Close history panel"
+              className="grid h-8 w-8 place-items-center rounded-xl text-ink-faint transition-colors hover:bg-paper hover:text-ink cursor-pointer"
+              aria-label="Close history drawer"
             >
               <X size={18} />
             </button>
@@ -158,10 +169,10 @@ export default function HistoryPanel({
                   setDeleteConfirmId(null)
                   onFilterChange(f.key)
                 }}
-                className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
+                className={`rounded-lg px-3 py-1 text-xs font-bold transition-all cursor-pointer ${
                   active
-                    ? 'bg-[#2a1e36] text-white'
-                    : 'bg-white text-ink-soft hover:bg-[#ece8f2] hover:text-ink border border-line'
+                    ? 'bg-[#221835] text-white shadow-xs'
+                    : 'bg-white text-ink-soft hover:bg-[#f0ebf7] hover:text-ink border border-line/70'
                 }`}
               >
                 {f.label}
@@ -173,33 +184,35 @@ export default function HistoryPanel({
         {/* Content list */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {error && (
-            <div className="rounded-lg border border-[#f5c6cb] bg-[#f8d7da] p-3 text-xs text-[#721c24]">
-              {error}
+            <div className="rounded-xl border border-[#f5c6cb] bg-[#f8d7da] p-3 text-xs text-[#721c24] flex items-center gap-2">
+              <AlertCircle size={15} className="shrink-0" />
+              <span>{error}</span>
             </div>
           )}
 
           {loading ? (
-            <div className="flex h-40 flex-col items-center justify-center gap-2 text-ink-faint">
+            <div className="flex h-44 flex-col items-center justify-center gap-2 text-ink-faint">
               <Loader2 size={24} className="animate-spin text-[#8e2cc9]" />
-              <span className="text-xs">Loading history...</span>
+              <span className="text-xs font-medium">Restoring history...</span>
             </div>
           ) : history.length === 0 ? (
-            <div className="flex h-56 flex-col items-center justify-center gap-3 px-6 text-center text-ink-faint">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-paper text-ink-faint">
-                <Database size={24} />
+            <div className="flex h-64 flex-col items-center justify-center gap-3 px-6 text-center text-ink-faint">
+              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#faf5fe] text-[#8e2cc9]/60">
+                <Database size={26} />
               </div>
               <div>
-                <p className="text-sm font-semibold text-ink-soft">No analyses found</p>
-                <p className="mt-1 text-xs text-ink-faint">
+                <p className="text-sm font-bold text-ink">No investigations yet</p>
+                <p className="mt-1 text-xs text-ink-faint max-w-xs">
                   {filter === 'all'
-                    ? 'Run a claim check in Text or Images to see results saved here automatically.'
-                    : `No ${filter} analyses found. Try switching filters or running a new check.`}
+                    ? 'Your completed analyses will appear here. Past runs can be restored instantly without repeated AI calls.'
+                    : `No ${filter} analyses found. Run a check to record an analysis.`}
                 </p>
               </div>
             </div>
           ) : (
             history.map((item) => {
-              const style = DECISION_STYLE[item.verdict] || DECISION_STYLE['INCONCLUSIVE']
+              const style =
+                DECISION_STYLE[item.verdict] || DECISION_STYLE['INCONCLUSIVE']
               const Icon = TYPE_ICONS[item.analysis_type] || FileText
               const isSelected = selectedId === item.id
               const isConfirmingDelete = deleteConfirmId === item.id
@@ -208,40 +221,54 @@ export default function HistoryPanel({
                 <div
                   key={item.id}
                   onClick={() => handleCardClick(item.id)}
-                  className={`group relative flex cursor-pointer flex-col gap-2.5 rounded-xl border p-3.5 transition-all ${
+                  className={`group relative flex cursor-pointer flex-col gap-2.5 rounded-xl border p-4 transition-all ${
                     isSelected
-                      ? 'border-[#9e31bf] bg-[#faf3fd] ring-2 ring-[#9e31bf]/20 shadow-sm'
-                      : 'border-line bg-white hover:border-[#d5b4e6] hover:bg-[#fcfaff] hover:shadow-xs'
+                      ? 'border-[#8e2cc9] bg-[#faf3fd] ring-2 ring-[#8e2cc9]/25 shadow-sm'
+                      : 'border-line bg-white hover:border-[#cfb7dc] hover:bg-[#fdfbfe] hover:shadow-xs'
                   }`}
                 >
                   {/* Top row */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
-                      <span className="inline-flex items-center gap-1 rounded bg-[#f4edf9] px-2 py-0.5 text-[11px] font-bold text-[#8e2cc9] capitalize">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-[#f4edf9] px-2 py-0.5 font-mono text-[10px] font-bold text-[#8e2cc9] capitalize">
                         <Icon size={12} aria-hidden />
                         {item.analysis_type}
                       </span>
+
                       {item.from_cache && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-[#e8f8f2] px-1.5 py-0.5 text-[10px] font-bold text-[#16866b]" title="Cached result">
+                        <span
+                          className="inline-flex items-center gap-0.5 rounded-md bg-[#e8f8f2] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#16866b]"
+                          title="Instant Result (cached in memory)"
+                        >
                           <Zap size={10} aria-hidden />
-                          Cached
+                          Instant Result
                         </span>
                       )}
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      <Chip color={style.color} tint={style.tint} className="text-[11px]">
+                      <Chip
+                        color={style.color}
+                        tint={style.tint}
+                        border={style.border}
+                        className="text-[10px]"
+                      >
                         {item.verdict}
                       </Chip>
+
                       <button
                         type="button"
                         onClick={(e) => handleDeleteClick(e, item.id)}
-                        className={`grid h-6 w-6 place-items-center rounded transition-colors ${
+                        className={`grid h-6 w-6 place-items-center rounded-lg transition-colors cursor-pointer ${
                           isConfirmingDelete
                             ? 'bg-[#c0392b] text-white'
-                            : 'text-ink-faint opacity-60 hover:opacity-100 hover:bg-[#fbe6e3] hover:text-[#c0392b]'
+                            : 'text-ink-faint opacity-50 group-hover:opacity-100 hover:bg-[#fbe6e3] hover:text-[#c0392b]'
                         }`}
-                        title={isConfirmingDelete ? 'Click again to confirm delete' : 'Delete this analysis'}
+                        title={
+                          isConfirmingDelete
+                            ? 'Click again to confirm delete'
+                            : 'Delete this record'
+                        }
                         aria-label="Delete analysis"
                       >
                         <Trash2 size={13} />
@@ -251,11 +278,11 @@ export default function HistoryPanel({
 
                   {/* Input / claim preview */}
                   <div>
-                    <p className="line-clamp-2 text-xs font-medium text-ink leading-relaxed">
-                      {item.input_text || item.original_filename || 'Untitled analysis'}
+                    <p className="line-clamp-2 text-xs font-semibold text-ink leading-relaxed">
+                      {item.input_text || item.original_filename || 'Untitled investigation'}
                     </p>
                     {item.headline && (
-                      <p className="mt-1 line-clamp-1 text-[11px] text-ink-faint">
+                      <p className="mt-1 line-clamp-1 font-serif text-[11px] text-ink-soft italic">
                         {item.headline}
                       </p>
                     )}
@@ -265,22 +292,29 @@ export default function HistoryPanel({
                   <div className="flex items-center justify-between border-t border-line/60 pt-2 text-[11px] text-ink-faint">
                     <div className="flex items-center gap-3">
                       <span>
-                        Trust: <strong className="text-ink">{item.trust_score != null ? Math.round(item.trust_score) : '-'}</strong>/100
+                        Trust Score:{' '}
+                        <strong className="font-mono text-ink">
+                          {item.trust_score != null ? Math.round(item.trust_score) : '-'}
+                        </strong>
+                        /100
                       </span>
                       {item.confidence != null && (
                         <span>
-                          Conf: <strong className="text-ink">{Math.round(item.confidence * 100)}%</strong>
+                          Conf:{' '}
+                          <strong className="font-mono text-ink">
+                            {Math.round(item.confidence * 100)}%
+                          </strong>
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 font-mono text-[10px]">
                       <Clock size={11} aria-hidden />
                       <span>{formatTimestamp(item.created_at)}</span>
                     </div>
                   </div>
 
                   {isConfirmingDelete && (
-                    <div className="mt-1 rounded bg-[#fbe6e3] px-2 py-1 text-center text-[11px] font-bold text-[#c0392b]">
+                    <div className="mt-1 rounded-lg bg-[#fbe6e3] px-2 py-1 text-center font-mono text-[10px] font-bold text-[#c0392b]">
                       Click trash icon again to permanently delete
                     </div>
                   )}
@@ -292,8 +326,12 @@ export default function HistoryPanel({
 
         {/* Footer info */}
         <div className="border-t border-line bg-[#faf9fc] px-5 py-3 text-[11px] text-ink-faint flex items-center justify-between">
-          <span>{history.length} {history.length === 1 ? 'record' : 'records'} in SQLite memory</span>
-          <span className="text-[10px]">Restores instantly without AI query</span>
+          <span className="font-medium">
+            {history.length} {history.length === 1 ? 'record' : 'records'} in SQLite storage
+          </span>
+          <span className="font-mono text-[10px] text-[#8e2cc9] font-bold">
+            Session Isolated
+          </span>
         </div>
       </aside>
     </>

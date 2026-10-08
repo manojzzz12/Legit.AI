@@ -1,44 +1,75 @@
-import { Calculator } from 'lucide-react'
+import { Binary, Calculator, CheckCircle2, ShieldCheck, Sparkles } from 'lucide-react'
 import { Card, SectionTitle } from './ui.jsx'
 
 export default function ScoreBreakdown({ overall }) {
-  const rows = overall.components
+  if (!overall) return null
+  const rows = overall.components || []
+
   return (
     <Card>
-      <SectionTitle icon={Calculator}>How the score was calculated</SectionTitle>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[480px] text-sm">
+      <SectionTitle
+        icon={Calculator}
+        subtitle="Deterministic signal weighting model combining independent corroboration, provenance, and source reliability"
+        aside={
+          <span className="font-mono text-xs font-bold text-[#8e2cc9] uppercase tracking-wider">
+            Deterministic Engine
+          </span>
+        }
+      >
+        Mathematical Score Derivation
+      </SectionTitle>
+
+      <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-xs">
+        <table className="w-full min-w-[500px] text-xs">
           <thead>
-            <tr className="border-b border-line text-left text-ink-soft">
-              <th className="py-2 font-semibold">Signal</th>
-              <th className="py-2 text-right font-semibold">Value (0-1)</th>
-              <th className="py-2 text-right font-semibold">Weight</th>
-              <th className="py-2 text-right font-semibold">Points</th>
+            <tr className="border-b border-line bg-[#faf8fc] text-left font-mono font-bold text-ink-soft">
+              <th className="py-3 px-4 uppercase tracking-wider">Investigative Signal</th>
+              <th className="py-3 px-3 text-right uppercase tracking-wider">Normalized (0–1)</th>
+              <th className="py-3 px-3 text-right uppercase tracking-wider">Weight %</th>
+              <th className="py-3 px-4 text-right uppercase tracking-wider">Contribution</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-line/60">
             {rows.map((r) => (
-              <tr key={r.key} className="border-b border-line/60">
-                <td className="py-2">{r.label}</td>
+              <tr key={r.key} className="hover:bg-[#faf9fc]/70 transition-colors">
+                <td className="py-3 px-4 font-bold text-ink">
+                  {r.label}
+                </td>
                 {r.applicable ? (
                   <>
-                    <td className="py-2 text-right tabular-nums">{r.value.toFixed(2)}</td>
-                    <td className="py-2 text-right tabular-nums">{Math.round(r.weight * 100)}%</td>
-                    <td className="py-2 text-right font-semibold tabular-nums">{r.points.toFixed(1)}</td>
+                    <td className="py-3 px-3 text-right font-mono tabular-nums text-ink">
+                      {r.value?.toFixed(2)}
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono tabular-nums text-ink-soft">
+                      {Math.round((r.weight || 0) * 100)}%
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono font-extrabold tabular-nums text-[#8e2cc9]">
+                      +{r.points?.toFixed(1)} pts
+                    </td>
                   </>
                 ) : (
-                  <td colSpan={3} className="py-2 text-right text-ink-faint">Not applicable to this input; weight shared by the other signals</td>
+                  <td colSpan={3} className="py-3 px-4 text-right font-mono text-[11px] text-ink-faint italic">
+                    Not applicable to this input (weight dynamically normalized across active signals)
+                  </td>
                 )}
               </tr>
             ))}
-            <tr>
-              <td className="py-2 font-bold" colSpan={3}>Trust score (importance-weighted across verified claims)</td>
-              <td className="py-2 text-right text-base font-extrabold tabular-nums">{overall.trust_score}</td>
+            <tr className="bg-[#f7f3fa] font-bold text-ink">
+              <td className="py-3.5 px-4 font-sans font-extrabold text-sm" colSpan={3}>
+                Final Aggregate Trust Score (out of 100)
+              </td>
+              <td className="py-3.5 px-4 text-right font-mono text-lg font-black tabular-nums text-[#8e2cc9]">
+                {overall.trust_score}
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-xs text-ink-faint">Base weights: evidence support 35%, source reliability 25%, agreement 20%, manipulation 10%, provenance 10%. These are prototype heuristics.</p>
+
+      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink-faint">
+        <span>Base heuristics: Evidence Support 35% · Source Reliability 25% · Cross-agreement 20% · Manipulation 10% · Provenance 10%</span>
+        <span className="font-mono text-[#8e2cc9] font-bold">Transparent &amp; Auditable</span>
+      </div>
     </Card>
   )
 }
