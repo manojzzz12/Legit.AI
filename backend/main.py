@@ -3,13 +3,15 @@
 Run:  uvicorn main:app --reload --port 8000
 Docs: http://localhost:8000/docs
 """
+import hashlib
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -22,7 +24,8 @@ from database import database as db  # noqa: E402
 from demo.demo_cases import DEMO_CASES  # noqa: E402
 from models.schemas import (CalculateTrustRequest, ClassifyEvidenceRequest,  # noqa: E402
                             SearchEvidenceRequest)
-from services import fallback_search, gemini_service, live_pipeline as live, media_processor, tavily_service  # noqa: E402
+from services import (cache_service, fallback_search, gemini_service,  # noqa: E402
+                      live_pipeline as live, media_processor, tavily_service)
 from services.pipeline import build_case  # noqa: E402
 
 app = FastAPI(title="TrustLens AI", version="0.2.0")
@@ -97,7 +100,7 @@ def run_demo(demo_id: str):
     return case
 
 
-# --------------------------------------------------------------------- cases
+# --------------------------------------------------------------------- cases & history
 @app.get("/api/case/{case_id}")
 def get_case(case_id: str):
     case = db.get_case(case_id)
@@ -109,6 +112,35 @@ def get_case(case_id: str):
 @app.get("/api/cases")
 def recent_cases():
     return db.list_cases()
+
+
+@app.get("/api/history")
+def get_history_list(type: Optional[str] = Query(None), limit: int = Query(50)):
+    return db.list_history(analysis_type=type, limit=limit)
+
+
+@app.get("/api/history/{history_id}")
+def get_history_detail(history_id: str):
+    case = db.get_history(history_id)
+    if not case:
+        return JSONResponse(status_code=404, content={"error": "history_not_found",
+                                                      "message": f"History item '{history_id}' not found."})
+    return case
+
+
+@app.delete("/api/history/{history_id}")
+def delete_history_item(history_id: str):
+    deleted = db.delete_history(history_id)
+    if not deleted:
+        return JSONResponse(status_code=404, content={"error": "history_not_found",
+                                                      "message": f"History item '{history_id}' not found."})
+    return {"deleted": True, "id": history_id}
+
+
+@app.delete("/api/history")
+def clear_all_history():
+    count = db.clear_history()
+    return {"deleted": True, "count": count}
 
 
 # ------------------------------------------------------------ live analysis
@@ -138,8 +170,8 @@ async def read_refs(references: Optional[List[UploadFile]], reference_text: str)
     return live.read_refs(raw, reference_text)
 
 
-def finish(case):
-    db.save_case(case)
+def finish(case, **kwargs):
+    db.save_case(case, **kwargs)
     return case
 
 
@@ -148,8 +180,18 @@ async def analyze_text(text: str = Form(""), reference_text: str = Form(""),
                        references: Optional[List[UploadFile]] = File(None)):
     """Text claim to verify. Optional reference documents/pasted text are used as extra evidence."""
     try:
+        cache_key = None
+        if not references and not (reference_text or "").strip():
+            cache_key = cache_service.text_cache_key(text)
+            cached = db.get_by_cache_key(cache_key)
+            if cached:
+                return cached
+
         refs, warns = await read_refs(references, reference_text)
-        return finish(live.analyze_text(text, refs, warns))
+        t0 = time.perf_counter()
+        case = live.analyze_text(text, refs, warns)
+        dur = int((time.perf_counter() - t0) * 1000)
+        return finish(case, cache_key=cache_key, processing_time_ms=dur)
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 
@@ -159,8 +201,21 @@ async def analyze_document(file: UploadFile = File(...), reference_text: str = F
                            references: Optional[List[UploadFile]] = File(None)):
     """A .txt/.md/.pdf/.docx whose claims are verified."""
     try:
+        data = await read_upload(file)
+        cache_key = None
+        if not references and not (reference_text or "").strip():
+            cache_key = cache_service.media_cache_key("document", caption="", content_bytes=data)
+            cached = db.get_by_cache_key(cache_key)
+            if cached:
+                return cached
+
         refs, warns = await read_refs(references, reference_text)
-        return finish(live.analyze_document(file.filename or "document", await read_upload(file), refs, warns))
+        t0 = time.perf_counter()
+        case = live.analyze_document(file.filename or "document", data, refs, warns)
+        dur = int((time.perf_counter() - t0) * 1000)
+        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+                      original_filename=file.filename,
+                      content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 
@@ -169,9 +224,22 @@ async def analyze_document(file: UploadFile = File(...), reference_text: str = F
 async def analyze_image(file: UploadFile = File(...), caption: str = Form(""), reference_text: str = Form(""),
                         references: Optional[List[UploadFile]] = File(None)):
     try:
+        data = await read_upload(file)
+        cache_key = None
+        if not references and not (reference_text or "").strip():
+            cache_key = cache_service.media_cache_key("image", caption=caption, content_bytes=data)
+            cached = db.get_by_cache_key(cache_key)
+            if cached:
+                return cached
+
         refs, warns = await read_refs(references, reference_text)
-        return finish(live.analyze_image(await read_upload(file), file.filename or "image", file.content_type or "image/jpeg",
-                                         caption, refs, warns))
+        t0 = time.perf_counter()
+        case = live.analyze_image(data, file.filename or "image", file.content_type or "image/jpeg",
+                                 caption, refs, warns)
+        dur = int((time.perf_counter() - t0) * 1000)
+        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+                      original_filename=file.filename, mime_type=file.content_type,
+                      content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 
@@ -180,9 +248,22 @@ async def analyze_image(file: UploadFile = File(...), caption: str = Form(""), r
 async def analyze_audio(file: UploadFile = File(...), transcript: str = Form(""), reference_text: str = Form(""),
                         references: Optional[List[UploadFile]] = File(None)):
     try:
+        data = await read_upload(file)
+        cache_key = None
+        if not references and not (reference_text or "").strip():
+            cache_key = cache_service.media_cache_key("audio", caption=transcript, content_bytes=data)
+            cached = db.get_by_cache_key(cache_key)
+            if cached:
+                return cached
+
         refs, warns = await read_refs(references, reference_text)
-        return finish(live.analyze_audio(await read_upload(file), file.filename or "audio", file.content_type or "audio/mpeg",
-                                         transcript, refs, warns))
+        t0 = time.perf_counter()
+        case = live.analyze_audio(data, file.filename or "audio", file.content_type or "audio/mpeg",
+                                 transcript, refs, warns)
+        dur = int((time.perf_counter() - t0) * 1000)
+        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+                      original_filename=file.filename, mime_type=file.content_type,
+                      content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 
@@ -191,8 +272,21 @@ async def analyze_audio(file: UploadFile = File(...), transcript: str = Form("")
 async def analyze_video(file: UploadFile = File(...), transcript: str = Form(""), reference_text: str = Form(""),
                         references: Optional[List[UploadFile]] = File(None)):
     try:
+        data = await read_upload(file)
+        cache_key = None
+        if not references and not (reference_text or "").strip():
+            cache_key = cache_service.media_cache_key("video", caption=transcript, content_bytes=data)
+            cached = db.get_by_cache_key(cache_key)
+            if cached:
+                return cached
+
         refs, warns = await read_refs(references, reference_text)
-        return finish(live.analyze_video(await read_upload(file), file.filename or "video.mp4", transcript, refs, warns))
+        t0 = time.perf_counter()
+        case = live.analyze_video(data, file.filename or "video.mp4", transcript, refs, warns)
+        dur = int((time.perf_counter() - t0) * 1000)
+        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+                      original_filename=file.filename,
+                      content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 

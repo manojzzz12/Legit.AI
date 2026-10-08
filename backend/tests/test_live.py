@@ -18,6 +18,9 @@ CLAIM = "The Riverside Bridge opened to traffic on 4 May 2021."
 
 @pytest.fixture(autouse=True)
 def fakes(monkeypatch):
+    from database import database as db
+    db.init_db()
+    db.clear_history()
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     monkeypatch.setenv("TAVILY_API_KEY", "fake")
     monkeypatch.setattr(gem, "extract_claims", lambda text, files=None, max_claims=6, extra="": {

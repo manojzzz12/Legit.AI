@@ -103,14 +103,26 @@ Automated check: `cd backend && pytest -q`
 
 ## API
 
-| Endpoint | Status in Phase 1 |
-|----------|-------------------|
-| GET /api/health | works |
-| GET /api/demo, GET /api/demo/{demo_id} | works |
-| GET /api/case/{case_id}, GET /api/cases | works (SQLite) |
-| POST /api/calculate-trust | works - runs the real scoring engine on evidence you send |
-| POST /api/analyze/text, image, audio, video | returns 501 with a clear message and the demo ids |
-| POST /api/search-evidence, /api/classify-evidence | returns 501 (Tavily / Gemini phases) |
+| Endpoint | Description |
+|----------|-------------|
+| GET /api/health | Health check, mode, and configured features |
+| GET /api/demo, GET /api/demo/{demo_id} | List and run simulated demo cases |
+| GET /api/history | List lightweight analysis history summaries (supports `?type=image\|text\|audio\|video`) |
+| GET /api/history/{id} | Retrieve complete analysis details from SQLite memory without rerunning AI |
+| DELETE /api/history/{id} | Delete a single history record |
+| DELETE /api/history | Clear all analysis history |
+| GET /api/case/{case_id}, GET /api/cases | Backward-compatible case retrieval |
+| POST /api/analyze/text | Verify text claims (cached deterministically) |
+| POST /api/analyze/document | Verify documents (.txt, .md, .pdf, .docx) |
+| POST /api/analyze/image | Verify images with OCR / Gemini Vision inspection (cached deterministically) |
+| POST /api/calculate-trust | Run the scoring engine on user-supplied claims and evidence |
+
+## Analysis History & Instant Memory Cache
+
+* **Automatic Persistence**: Every analysis performed (text or media) is automatically stored in SQLite. Starting a new check does not erase previous findings.
+* **Deterministic Caching**: Identical inputs (normalized claim text or matching file SHA-256 + caption) automatically return cached results instantly without re-calling Gemini or Tavily.
+* **Cache TTL**: Configured via the `ANALYSIS_CACHE_TTL_HOURS` environment variable (default: 24 hours). Expired entries automatically trigger a fresh web-search and AI analysis.
+* **Vercel Serverless Persistence Note**: On Vercel, serverless lambdas use an ephemeral filesystem (`/tmp/trustlens.db`). History and cache persist within the warm serverless container instance and locally during development, but is instance-local.
 
 ## Implemented vs simulated (Phase 1)
 

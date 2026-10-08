@@ -26,6 +26,12 @@ export const getHealth = () => request('/health')
 export const getDemos = () => request('/demo')
 export const runDemo = (id) => request(`/demo/${id}`)
 
+export const getHistory = (type) =>
+  request(type && type.toLowerCase() !== 'all' ? `/history?type=${encodeURIComponent(type)}` : '/history')
+export const getHistoryItem = (id) => request(`/history/${id}`)
+export const deleteHistoryItem = (id) => request(`/history/${id}`, { method: 'DELETE' })
+export const clearHistory = () => request('/history', { method: 'DELETE' })
+
 // Every live analysis is a multipart form so the same code path handles text, documents,
 // media and optional reference evidence. Keys stay on the backend.
 // opts: { text, file, transcript, referenceText, referenceFiles }

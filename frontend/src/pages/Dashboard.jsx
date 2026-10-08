@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, Info } from 'lucide-react'
+import { AlertCircle, History, Info, Zap } from 'lucide-react'
 import Header from '../components/Header.jsx'
+import HistoryPanel from '../components/HistoryPanel.jsx'
 import InputPanel from '../components/InputPanel.jsx'
 import VerdictCard from '../components/VerdictCard.jsx'
 import ExtractedContent from '../components/ExtractedContent.jsx'
@@ -15,7 +16,16 @@ import ScoreBreakdown from '../components/ScoreBreakdown.jsx'
 import Conclusion from '../components/Conclusion.jsx'
 import Explore from './Explore.jsx'
 import Home from './Home.jsx'
-import { analyze, getDemos, getHealth, runDemo } from '../services/api.js'
+import {
+  analyze,
+  clearHistory,
+  deleteHistoryItem,
+  getDemos,
+  getHealth,
+  getHistory,
+  getHistoryItem,
+  runDemo,
+} from '../services/api.js'
 
 function pageFromPath(path) {
   if (path === '/explore') return 'explore'
@@ -36,9 +46,27 @@ export default function Dashboard() {
   const [message, setMessage] = useState(null)
   const resultsRef = useRef(null)
 
+  // History state
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyList, setHistoryList] = useState([])
+  const [historyFilter, setHistoryFilter] = useState('all')
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [selectedHistoryId, setSelectedHistoryId] = useState(null)
+  const [historyError, setHistoryError] = useState(null)
+
+  const loadHistory = (filter = historyFilter) => {
+    setLoadingHistory(true)
+    setHistoryError(null)
+    getHistory(filter)
+      .then((items) => setHistoryList(items || []))
+      .catch((err) => setHistoryError(err.message))
+      .finally(() => setLoadingHistory(false))
+  }
+
   useEffect(() => {
     getHealth().then(setHealth).catch(() => setHealth({ status: 'down' }))
     getDemos().then(setDemos).catch((e) => setMessage({ kind: 'error', text: e.message }))
+    loadHistory('all')
   }, [])
 
   useEffect(() => {
@@ -58,7 +86,55 @@ export default function Dashboard() {
 
   const showResult = (data) => {
     setResult(data)
+    if (data?.case_id) setSelectedHistoryId(data.case_id)
+    loadHistory(historyFilter)
     window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  const handleSelectHistory = async (id) => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      const fullCase = await getHistoryItem(id)
+      setSelectedHistoryId(id)
+      setResult(fullCase)
+      setHistoryOpen(false)
+      setMessage({
+        kind: 'info',
+        text: `Restored saved analysis (${fullCase.input?.type || 'analysis'}) from SQLite memory. No AI queries needed.`,
+      })
+      window.setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    } catch (err) {
+      setMessage({ kind: 'error', text: `Failed to load history item: ${err.message}` })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteHistory = async (id) => {
+    try {
+      await deleteHistoryItem(id)
+      setHistoryList((prev) => prev.filter((item) => item.id !== id))
+      if (selectedHistoryId === id) setSelectedHistoryId(null)
+    } catch (err) {
+      setHistoryError(`Failed to delete item: ${err.message}`)
+    }
+  }
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory()
+      setHistoryList([])
+      setSelectedHistoryId(null)
+      setMessage({ kind: 'info', text: 'All analysis history cleared.' })
+    } catch (err) {
+      setHistoryError(`Failed to clear history: ${err.message}`)
+    }
+  }
+
+  const handleFilterChange = (newFilter) => {
+    setHistoryFilter(newFilter)
+    loadHistory(newFilter)
   }
 
   const handleDemo = async (id) => {
@@ -80,7 +156,8 @@ export default function Dashboard() {
     setActiveDemo(null)
     const endpoint = kind === 'text' && opts.file ? 'document' : kind
     try {
-      showResult(await analyze(endpoint, opts))
+      const res = await analyze(endpoint, opts)
+      showResult(res)
     } catch (e) {
       const demoHint = e.body?.demo_available ? ' You can still run one of the sample checks from the home page.' : ''
       setMessage({ kind: e.status >= 500 || e.status === 0 ? 'error' : 'info', text: e.message + demoHint })
@@ -91,7 +168,14 @@ export default function Dashboard() {
 
   return (
     <div className="app-shell">
-      <Header health={health} page={page} onNavigate={navigate} />
+      <Header
+        health={health}
+        page={page}
+        onNavigate={navigate}
+        historyCount={historyList.length}
+        onToggleHistory={() => setHistoryOpen((p) => !p)}
+        historyOpen={historyOpen}
+      />
       <main className={`main-content ${page === 'home' ? 'main-home' : ''}`}>
         {page === 'home'
           ? <Home demos={demos} loading={loading} activeDemo={activeDemo} onDemo={handleDemo} onNavigate={navigate} />
@@ -109,6 +193,14 @@ export default function Dashboard() {
         {result && (
           <div ref={resultsRef} className="results-area">
             <div className="results-heading"><span className="eyebrow">YOUR ANALYSIS</span><h2>Evidence review</h2></div>
+            {result.from_cache && (
+              <div role="status" className="notice notice-info mb-4">
+                <Zap size={16} className="notice-icon text-[#16866b]" aria-hidden />
+                <span>
+                  <strong>Instant cached result:</strong> Loaded directly from memory cache without repeating AI or web search queries.
+                </span>
+              </div>
+            )}
             {result.warnings?.length > 0 && (
               <div role="status" className="result-warning">
                 <strong>Some steps ran with limits:</strong>
@@ -140,6 +232,20 @@ export default function Dashboard() {
         <span className="footer-brand">LEGIT.AI</span>
         <span>Evidence can be incomplete. Use this as a helpful signal, not proof that content is real or fake.</span>
       </footer>
+
+      <HistoryPanel
+        isOpen={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        history={historyList}
+        selectedId={selectedHistoryId}
+        onSelect={handleSelectHistory}
+        onDelete={handleDeleteHistory}
+        onClearAll={handleClearHistory}
+        loading={loadingHistory}
+        filter={historyFilter}
+        onFilterChange={handleFilterChange}
+        error={historyError}
+      />
     </div>
   )
 }
