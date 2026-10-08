@@ -1,3 +1,5 @@
+import { getSessionId } from './session'
+
 // All backend calls live here. The frontend never sees any API key:
 // Gemini and Tavily keys stay in backend/.env.
 const BASE = import.meta.env.VITE_API_URL || '/api'
@@ -10,15 +12,19 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, options) {
+async function request(path, options = {}) {
   let res
+  const headers = {
+    ...(options.headers || {}),
+    'X-Session-ID': getSessionId(),
+  }
   try {
-    res = await fetch(`${BASE}${path}`, options)
+    res = await fetch(`${BASE}${path}`, { ...options, headers })
   } catch {
     throw new ApiError('Cannot reach the backend. Start it with: uvicorn main:app --port 8000', 0, null)
   }
   const body = await res.json().catch(() => null)
-  if (!res.ok) throw new ApiError(body?.message || `Request failed (${res.status})`, res.status, body)
+  if (!res.ok) throw new ApiError(body?.detail || body?.message || `Request failed (${res.status})`, res.status, body)
   return body
 }
 

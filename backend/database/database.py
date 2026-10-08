@@ -34,6 +34,7 @@ def init_db() -> None:
     with _conn() as c:
         c.execute("""CREATE TABLE IF NOT EXISTS cases (
             case_id TEXT PRIMARY KEY,
+            session_id TEXT,
             mode TEXT,
             input_type TEXT,
             analysis_type TEXT,
@@ -57,6 +58,7 @@ def init_db() -> None:
         # Add any missing columns if migrating from an earlier schema
         existing_cols = {row[1] for row in c.execute("PRAGMA table_info(cases)").fetchall()}
         columns_to_add = [
+            ("session_id", "TEXT"),
             ("input_type", "TEXT"),
             ("analysis_type", "TEXT"),
             ("status", "TEXT DEFAULT 'COMPLETED'"),
@@ -79,6 +81,8 @@ def init_db() -> None:
                 except sqlite3.OperationalError:
                     pass
 
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cases_session_id ON cases (session_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cases_session_cache ON cases (session_id, cache_key)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_cases_cache_key ON cases (cache_key)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_cases_created_at ON cases (created_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_cases_type ON cases (analysis_type)")
@@ -94,9 +98,14 @@ def save_case(
     mime_type: Optional[str] = None,
     content_hash: Optional[str] = None,
     from_cache: bool = False,
+    session_id: Optional[str] = None,
 ) -> None:
     case_id = case.get("case_id") or uuid.uuid4().hex[:10]
     case["case_id"] = case_id
+    resolved_session_id = session_id or case.get("session_id")
+    if resolved_session_id:
+        case["session_id"] = resolved_session_id
+
     mode = case.get("mode", "live")
     inp = case.get("input", {})
     analysis_type = inp.get("type", "text")
@@ -122,23 +131,30 @@ def save_case(
 
     with _conn() as c:
         c.execute("""INSERT OR REPLACE INTO cases (
-            case_id, mode, input_type, analysis_type, status, created_at, completed_at,
+            case_id, session_id, mode, input_type, analysis_type, status, created_at, completed_at,
             processing_time_ms, input_text, original_filename, mime_type, content_hash,
             cache_key, decision, trust_score, confidence, risk_score, from_cache, payload
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
-            case_id, mode, analysis_type, analysis_type, status, created_at, completed_at,
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            case_id, resolved_session_id, mode, analysis_type, analysis_type, status, created_at, completed_at,
             processing_time_ms or 0, input_text, orig_file, mime, chash,
             cache_key, decision, trust_score, confidence, risk_score, 1 if from_cache else 0, payload_str
         ))
 
 
-def get_case(case_id: str) -> Optional[Dict]:
+def get_case(case_id: str, session_id: Optional[str] = None) -> Optional[Dict]:
     with _conn() as c:
-        row = c.execute("SELECT payload FROM cases WHERE case_id=?", (case_id,)).fetchone()
+        if session_id:
+            row = c.execute(
+                "SELECT payload FROM cases WHERE case_id=? AND session_id=? AND session_id IS NOT NULL AND session_id != ''",
+                (case_id, session_id)
+            ).fetchone()
+        else:
+            row = c.execute("SELECT payload FROM cases WHERE case_id=?", (case_id,)).fetchone()
     return json.loads(row["payload"]) if row else None
 
 
-get_history = get_case
+def get_history(case_id: str, session_id: Optional[str] = None) -> Optional[Dict]:
+    return get_case(case_id, session_id=session_id)
 
 
 def list_cases(limit: int = 20) -> List[Dict]:
@@ -149,14 +165,18 @@ def list_cases(limit: int = 20) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def list_history(analysis_type: Optional[str] = None, limit: int = 50) -> List[Dict]:
-    """Returns lightweight metadata summaries of stored analyses."""
+def list_history(session_id: Optional[str] = None, analysis_type: Optional[str] = None, limit: int = 50) -> List[Dict]:
+    """Returns lightweight metadata summaries of stored analyses scoped to session_id."""
+    if not session_id or not session_id.strip():
+        return []
+
     with _conn() as c:
-        query = ("SELECT case_id, mode, analysis_type, status, created_at, completed_at, "
+        query = ("SELECT case_id, session_id, mode, analysis_type, status, created_at, completed_at, "
                  "processing_time_ms, input_text, original_filename, mime_type, content_hash, "
                  "decision, trust_score, confidence, risk_score, from_cache, payload "
-                 "FROM cases WHERE status = 'COMPLETED' ")
-        params: List[Any] = []
+                 "FROM cases WHERE status = 'COMPLETED' "
+                 "AND session_id = ? AND session_id IS NOT NULL AND session_id != '' ")
+        params: List[Any] = [session_id.strip()]
         if analysis_type and analysis_type.strip().lower() != "all":
             norm_type = analysis_type.strip().lower()
             if norm_type == "text":
@@ -188,6 +208,7 @@ def list_history(analysis_type: Optional[str] = None, limit: int = 50) -> List[D
         out.append({
             "id": d["case_id"],
             "case_id": d["case_id"],
+            "session_id": d.get("session_id"),
             "mode": d["mode"],
             "analysis_type": d["analysis_type"] or "text",
             "status": d["status"] or "COMPLETED",
@@ -212,20 +233,32 @@ def list_history(analysis_type: Optional[str] = None, limit: int = 50) -> List[D
     return out
 
 
-def delete_history(case_id: str) -> bool:
+def delete_history(case_id: str, session_id: Optional[str] = None) -> bool:
     with _conn() as c:
-        cur = c.execute("DELETE FROM cases WHERE case_id=?", (case_id,))
+        if session_id:
+            cur = c.execute(
+                "DELETE FROM cases WHERE case_id=? AND session_id=? AND session_id IS NOT NULL AND session_id != ''",
+                (case_id, session_id)
+            )
+        else:
+            cur = c.execute("DELETE FROM cases WHERE case_id=?", (case_id,))
         return cur.rowcount > 0
 
 
-def clear_history() -> int:
+def clear_history(session_id: Optional[str] = None) -> int:
     with _conn() as c:
-        cur = c.execute("DELETE FROM cases")
+        if session_id:
+            cur = c.execute(
+                "DELETE FROM cases WHERE session_id=? AND session_id IS NOT NULL AND session_id != ''",
+                (session_id,)
+            )
+        else:
+            cur = c.execute("DELETE FROM cases")
         return cur.rowcount
 
 
-def get_by_cache_key(cache_key: str, ttl_hours: Optional[float] = None) -> Optional[Dict]:
-    """Retrieve cached analysis if valid and not expired."""
+def get_by_cache_key(cache_key: str, session_id: Optional[str] = None, ttl_hours: Optional[float] = None) -> Optional[Dict]:
+    """Retrieve cached analysis if valid, scoped to session_id, and not expired."""
     if not cache_key:
         return None
     if ttl_hours is None:
@@ -235,10 +268,21 @@ def get_by_cache_key(cache_key: str, ttl_hours: Optional[float] = None) -> Optio
             ttl_hours = 24.0
 
     with _conn() as c:
-        row = c.execute(
-            "SELECT payload, created_at FROM cases WHERE cache_key=? AND status='COMPLETED' ORDER BY created_at DESC LIMIT 1",
-            (cache_key,)
-        ).fetchone()
+        if session_id and session_id.strip():
+            query = (
+                "SELECT payload, created_at FROM cases WHERE cache_key=? "
+                "AND session_id=? AND session_id IS NOT NULL AND session_id != '' "
+                "AND status='COMPLETED' ORDER BY created_at DESC LIMIT 1"
+            )
+            params = (cache_key, session_id.strip())
+        else:
+            query = (
+                "SELECT payload, created_at FROM cases WHERE cache_key=? "
+                "AND status='COMPLETED' ORDER BY created_at DESC LIMIT 1"
+            )
+            params = (cache_key,)
+
+        row = c.execute(query, params).fetchone()
         if not row:
             return None
 

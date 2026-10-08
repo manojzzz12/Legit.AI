@@ -5,13 +5,15 @@ Docs: http://localhost:8000/docs
 """
 import hashlib
 import os
+import re
 import shutil
 import time
 from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import (FastAPI, File, Form, Header, HTTPException, Query,
+                     UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -27,6 +29,25 @@ from models.schemas import (CalculateTrustRequest, ClassifyEvidenceRequest,  # n
 from services import (cache_service, fallback_search, gemini_service,  # noqa: E402
                       live_pipeline as live, media_processor, tavily_service)
 from services.pipeline import build_case  # noqa: E402
+
+SESSION_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]{8,128}$")
+
+
+def validate_session_id(x_session_id: Optional[str], required: bool = True) -> Optional[str]:
+    if not x_session_id or not x_session_id.strip():
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing X-Session-ID header. A valid session ID is required to isolate analysis history."
+            )
+        return None
+    cleaned = x_session_id.strip()
+    if not SESSION_ID_REGEX.match(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid X-Session-ID header format. Must be 8-128 alphanumeric characters, hyphens, or underscores."
+        )
+    return cleaned
 
 app = FastAPI(title="TrustLens AI", version="0.2.0")
 origins = [
@@ -91,19 +112,21 @@ def list_demos():
 
 
 @app.get("/api/demo/{demo_id}")
-def run_demo(demo_id: str):
+def run_demo(demo_id: str, x_session_id: Optional[str] = Header(None, alias="X-Session-ID")):
+    s_id = validate_session_id(x_session_id, required=False)
     raw = DEMO_CASES.get(demo_id)
     if not raw:
         return JSONResponse(status_code=404, content={"error": "unknown_demo", "demo_ids": DEMO_IDS})
     case = build_case(raw, mode="demo")
-    db.save_case(case)
+    db.save_case(case, session_id=s_id)
     return case
 
 
 # --------------------------------------------------------------------- cases & history
 @app.get("/api/case/{case_id}")
-def get_case(case_id: str):
-    case = db.get_case(case_id)
+def get_case(case_id: str, x_session_id: Optional[str] = Header(None, alias="X-Session-ID")):
+    s_id = validate_session_id(x_session_id, required=False)
+    case = db.get_case(case_id, session_id=s_id)
     if not case:
         return JSONResponse(status_code=404, content={"error": "case_not_found"})
     return case
@@ -115,13 +138,22 @@ def recent_cases():
 
 
 @app.get("/api/history")
-def get_history_list(type: Optional[str] = Query(None), limit: int = Query(50)):
-    return db.list_history(analysis_type=type, limit=limit)
+def get_history_list(
+    type: Optional[str] = Query(None),
+    limit: int = Query(50),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
+    s_id = validate_session_id(x_session_id, required=True)
+    return db.list_history(session_id=s_id, analysis_type=type, limit=limit)
 
 
 @app.get("/api/history/{history_id}")
-def get_history_detail(history_id: str):
-    case = db.get_history(history_id)
+def get_history_detail(
+    history_id: str,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
+    s_id = validate_session_id(x_session_id, required=True)
+    case = db.get_history(history_id, session_id=s_id)
     if not case:
         return JSONResponse(status_code=404, content={"error": "history_not_found",
                                                       "message": f"History item '{history_id}' not found."})
@@ -129,8 +161,12 @@ def get_history_detail(history_id: str):
 
 
 @app.delete("/api/history/{history_id}")
-def delete_history_item(history_id: str):
-    deleted = db.delete_history(history_id)
+def delete_history_item(
+    history_id: str,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
+    s_id = validate_session_id(x_session_id, required=True)
+    deleted = db.delete_history(history_id, session_id=s_id)
     if not deleted:
         return JSONResponse(status_code=404, content={"error": "history_not_found",
                                                       "message": f"History item '{history_id}' not found."})
@@ -138,8 +174,11 @@ def delete_history_item(history_id: str):
 
 
 @app.delete("/api/history")
-def clear_all_history():
-    count = db.clear_history()
+def clear_all_history(
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
+    s_id = validate_session_id(x_session_id, required=True)
+    count = db.clear_history(session_id=s_id)
     return {"deleted": True, "count": count}
 
 
@@ -176,14 +215,19 @@ def finish(case, **kwargs):
 
 
 @app.post("/api/analyze/text")
-async def analyze_text(text: str = Form(""), reference_text: str = Form(""),
-                       references: Optional[List[UploadFile]] = File(None)):
+async def analyze_text(
+    text: str = Form(""),
+    reference_text: str = Form(""),
+    references: Optional[List[UploadFile]] = File(None),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     """Text claim to verify. Optional reference documents/pasted text are used as extra evidence."""
     try:
+        s_id = validate_session_id(x_session_id, required=False)
         cache_key = None
         if not references and not (reference_text or "").strip():
             cache_key = cache_service.text_cache_key(text)
-            cached = db.get_by_cache_key(cache_key)
+            cached = db.get_by_cache_key(cache_key, session_id=s_id)
             if cached:
                 return cached
 
@@ -191,21 +235,26 @@ async def analyze_text(text: str = Form(""), reference_text: str = Form(""),
         t0 = time.perf_counter()
         case = live.analyze_text(text, refs, warns)
         dur = int((time.perf_counter() - t0) * 1000)
-        return finish(case, cache_key=cache_key, processing_time_ms=dur)
+        return finish(case, session_id=s_id, cache_key=cache_key, processing_time_ms=dur)
     except Exception as e:  # noqa: BLE001
         return live_error(e)
 
 
 @app.post("/api/analyze/document")
-async def analyze_document(file: UploadFile = File(...), reference_text: str = Form(""),
-                           references: Optional[List[UploadFile]] = File(None)):
+async def analyze_document(
+    file: UploadFile = File(...),
+    reference_text: str = Form(""),
+    references: Optional[List[UploadFile]] = File(None),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     """A .txt/.md/.pdf/.docx whose claims are verified."""
     try:
+        s_id = validate_session_id(x_session_id, required=False)
         data = await read_upload(file)
         cache_key = None
         if not references and not (reference_text or "").strip():
             cache_key = cache_service.media_cache_key("document", caption="", content_bytes=data)
-            cached = db.get_by_cache_key(cache_key)
+            cached = db.get_by_cache_key(cache_key, session_id=s_id)
             if cached:
                 return cached
 
@@ -213,7 +262,7 @@ async def analyze_document(file: UploadFile = File(...), reference_text: str = F
         t0 = time.perf_counter()
         case = live.analyze_document(file.filename or "document", data, refs, warns)
         dur = int((time.perf_counter() - t0) * 1000)
-        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+        return finish(case, session_id=s_id, cache_key=cache_key, processing_time_ms=dur,
                       original_filename=file.filename,
                       content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
@@ -221,14 +270,20 @@ async def analyze_document(file: UploadFile = File(...), reference_text: str = F
 
 
 @app.post("/api/analyze/image")
-async def analyze_image(file: UploadFile = File(...), caption: str = Form(""), reference_text: str = Form(""),
-                        references: Optional[List[UploadFile]] = File(None)):
+async def analyze_image(
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    reference_text: str = Form(""),
+    references: Optional[List[UploadFile]] = File(None),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     try:
+        s_id = validate_session_id(x_session_id, required=False)
         data = await read_upload(file)
         cache_key = None
         if not references and not (reference_text or "").strip():
             cache_key = cache_service.media_cache_key("image", caption=caption, content_bytes=data)
-            cached = db.get_by_cache_key(cache_key)
+            cached = db.get_by_cache_key(cache_key, session_id=s_id)
             if cached:
                 return cached
 
@@ -237,7 +292,7 @@ async def analyze_image(file: UploadFile = File(...), caption: str = Form(""), r
         case = live.analyze_image(data, file.filename or "image", file.content_type or "image/jpeg",
                                  caption, refs, warns)
         dur = int((time.perf_counter() - t0) * 1000)
-        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+        return finish(case, session_id=s_id, cache_key=cache_key, processing_time_ms=dur,
                       original_filename=file.filename, mime_type=file.content_type,
                       content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
@@ -245,14 +300,20 @@ async def analyze_image(file: UploadFile = File(...), caption: str = Form(""), r
 
 
 @app.post("/api/analyze/audio")
-async def analyze_audio(file: UploadFile = File(...), transcript: str = Form(""), reference_text: str = Form(""),
-                        references: Optional[List[UploadFile]] = File(None)):
+async def analyze_audio(
+    file: UploadFile = File(...),
+    transcript: str = Form(""),
+    reference_text: str = Form(""),
+    references: Optional[List[UploadFile]] = File(None),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     try:
+        s_id = validate_session_id(x_session_id, required=False)
         data = await read_upload(file)
         cache_key = None
         if not references and not (reference_text or "").strip():
             cache_key = cache_service.media_cache_key("audio", caption=transcript, content_bytes=data)
-            cached = db.get_by_cache_key(cache_key)
+            cached = db.get_by_cache_key(cache_key, session_id=s_id)
             if cached:
                 return cached
 
@@ -261,7 +322,7 @@ async def analyze_audio(file: UploadFile = File(...), transcript: str = Form("")
         case = live.analyze_audio(data, file.filename or "audio", file.content_type or "audio/mpeg",
                                  transcript, refs, warns)
         dur = int((time.perf_counter() - t0) * 1000)
-        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+        return finish(case, session_id=s_id, cache_key=cache_key, processing_time_ms=dur,
                       original_filename=file.filename, mime_type=file.content_type,
                       content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
@@ -269,14 +330,20 @@ async def analyze_audio(file: UploadFile = File(...), transcript: str = Form("")
 
 
 @app.post("/api/analyze/video")
-async def analyze_video(file: UploadFile = File(...), transcript: str = Form(""), reference_text: str = Form(""),
-                        references: Optional[List[UploadFile]] = File(None)):
+async def analyze_video(
+    file: UploadFile = File(...),
+    transcript: str = Form(""),
+    reference_text: str = Form(""),
+    references: Optional[List[UploadFile]] = File(None),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     try:
+        s_id = validate_session_id(x_session_id, required=False)
         data = await read_upload(file)
         cache_key = None
         if not references and not (reference_text or "").strip():
             cache_key = cache_service.media_cache_key("video", caption=transcript, content_bytes=data)
-            cached = db.get_by_cache_key(cache_key)
+            cached = db.get_by_cache_key(cache_key, session_id=s_id)
             if cached:
                 return cached
 
@@ -284,7 +351,7 @@ async def analyze_video(file: UploadFile = File(...), transcript: str = Form("")
         t0 = time.perf_counter()
         case = live.analyze_video(data, file.filename or "video.mp4", transcript, refs, warns)
         dur = int((time.perf_counter() - t0) * 1000)
-        return finish(case, cache_key=cache_key, processing_time_ms=dur,
+        return finish(case, session_id=s_id, cache_key=cache_key, processing_time_ms=dur,
                       original_filename=file.filename,
                       content_hash=hashlib.sha256(data).hexdigest())
     except Exception as e:  # noqa: BLE001
@@ -313,8 +380,12 @@ def classify_evidence(req: ClassifyEvidenceRequest):
 
 # ---------------------------------------------- scoring (works right now)
 @app.post("/api/calculate-trust")
-def calculate_trust(req: CalculateTrustRequest):
+def calculate_trust(
+    req: CalculateTrustRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
     """Run the REAL scoring engine on evidence you supply yourself."""
+    s_id = validate_session_id(x_session_id, required=False)
     raw = {
         "input": {"type": req.input_type, "title": "Manual scoring request", "text": req.input_text,
                   "extraction_method": "Supplied through /api/calculate-trust"},
@@ -329,5 +400,5 @@ def calculate_trust(req: CalculateTrustRequest):
             e["id"] = e["id"] or f"{d['id']}e{j}"
         raw["claims"].append(d)
     case = build_case(raw, mode="manual")
-    db.save_case(case)
+    db.save_case(case, session_id=s_id)
     return case

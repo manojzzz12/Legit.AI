@@ -117,10 +117,13 @@ Automated check: `cd backend && pytest -q`
 | POST /api/analyze/image | Verify images with OCR / Gemini Vision inspection (cached deterministically) |
 | POST /api/calculate-trust | Run the scoring engine on user-supplied claims and evidence |
 
-## Analysis History & Instant Memory Cache
+## Analysis History, Instant Memory Cache & Session Privacy
 
+* **Anonymous Session Isolation**: Analysis history and cache are strictly scoped to each user's browser session. The frontend generates a persistent anonymous UUID v4 stored in `localStorage` under `legit_ai_session_id` and attaches it via the `X-Session-ID` header to all backend API requests without requiring logins or external authentication.
+* **Backend Ownership Enforcement**: All history operations (`GET /api/history`, `GET /api/history/{id}`, `DELETE /api/history/{id}`, `DELETE /api/history`) are enforced on the backend. Attempting to access or delete another session's record returns 404 without revealing the record exists. Clearing history only clears records for the caller's session.
+* **Per-Session Cache Isolation**: Cached analyses are partitioned per session so that queries and results from one visitor never leak to another visitor, even when identical claims or files are analyzed.
 * **Automatic Persistence**: Every analysis performed (text or media) is automatically stored in SQLite. Starting a new check does not erase previous findings.
-* **Deterministic Caching**: Identical inputs (normalized claim text or matching file SHA-256 + caption) automatically return cached results instantly without re-calling Gemini or Tavily.
+* **Deterministic Caching**: Within a session, identical inputs (normalized claim text or matching file SHA-256 + caption) automatically return cached results instantly without re-calling Gemini or Tavily.
 * **Cache TTL**: Configured via the `ANALYSIS_CACHE_TTL_HOURS` environment variable (default: 24 hours). Expired entries automatically trigger a fresh web-search and AI analysis.
 * **Vercel Serverless Persistence Note**: On Vercel, serverless lambdas use an ephemeral filesystem (`/tmp/trustlens.db`). History and cache persist within the warm serverless container instance and locally during development, but is instance-local.
 

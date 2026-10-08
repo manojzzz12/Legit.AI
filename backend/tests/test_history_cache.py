@@ -11,7 +11,8 @@ from main import app
 from PIL import Image
 from services import cache_service
 
-client = TestClient(app)
+TEST_SESSION = "test-session-cache-suite"
+client = TestClient(app, headers={"X-Session-ID": TEST_SESSION})
 
 
 @pytest.fixture(autouse=True)
@@ -24,9 +25,10 @@ def clean_db():
 
 
 def sample_case(case_id="test-1", decision="TRUSTED", trust_score=92.5, analysis_type="text",
-                text="The earth orbits around the sun."):
+                text="The earth orbits around the sun.", session_id=TEST_SESSION):
     return {
         "case_id": case_id,
+        "session_id": session_id,
         "mode": "live",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "input": {
